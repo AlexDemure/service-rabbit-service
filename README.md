@@ -1,6 +1,6 @@
 
 ## Развертывание микросервисов на FastAPI с применением RabbitMQ
-#####Данный пример не использует Celery, Redis, Celery-flower
+##### Данный пример не использует Celery, Redis, Celery-flower
 
 ### Технологии:
 - FastAPI
