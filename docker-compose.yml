@@ -1,0 +1,36 @@
+version: "3.8"
+
+volumes:
+  rabbitmq_data:
+
+services:
+  service_a:
+    build: serviceA
+    container_name: serviceA
+    hostname: serviceA
+    network_mode: "host"
+    ports:
+      - "7040:7040"
+    depends_on:
+
+      - "rabbitmq"
+
+  service_b:
+    build: serviceB
+    container_name: serviceB
+    hostname: serviceB
+    network_mode: "host"
+    ports:
+      - "7041:7041"
+    depends_on:
+      - "rabbitmq"
+
+  rabbitmq:
+    image: "bitnami/rabbitmq:3.7"
+    container_name: rabbitmq
+    hostname: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - "rabbitmq_data:/bitnami"
