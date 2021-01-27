@@ -1,0 +1,2 @@
+# service-rabbit-service
+Микросервисы
