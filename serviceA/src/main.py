@@ -19,18 +19,18 @@ async def get_users() -> dict:
     return users.json()
 
 
-@app.get("/rpc_send_message")
-async def rpc_send_message():
+@app.get("/mq_send_message")
+async def mq_send_message():
     """
     EndPoint для отправки сообщения в сервис B.
 
     В данном примере используется для удобного тригера отправки сообщения в другой сервис.
     """
-    routing_key = "test_queue"  # Название очереди которую слушает сервис B
+    routing_key = "mq_test_queue"  # Название очереди которую слушает сервис B
 
     # Публикация сообщения.
     await rabbit.channel.default_exchange.publish(
-        aio_pika.Message(b'ServiceA', content_type='text/plain'), routing_key
+        aio_pika.Message(b'MQServiceA', content_type='text/plain'), routing_key
     )
 
 

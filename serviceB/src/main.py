@@ -27,8 +27,8 @@ async def get_posts() -> dict:
     return get_fake_data()
 
 
-async def rpc_accept_message(msg) -> None:
-    """Функция которая слушает очередь test-queue приходит объект IncomingMessage"""
+async def mq_accept_message(msg) -> None:
+    """MQ-функция которая слушает очередь test-queue приходит объект IncomingMessage"""
     logging.debug(f"{msg.body}")
 
     # По дефолту в rabbit.server.py автоматическое удаление сообщения поставлено в положение False
@@ -40,7 +40,7 @@ async def rpc_accept_message(msg) -> None:
 # Регистрация слушателей очереди.
 # Для этого необходимо передать пока что функцию (коротину) и название очереди которую будет слушать эта функция.
 all_consumers = (
-    rabbit.consume_queue(rpc_accept_message, "test_queue"),
+    rabbit.consume_queue(mq_accept_message, "mq_test_queue"),
 )
 
 
