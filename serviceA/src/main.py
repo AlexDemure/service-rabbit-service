@@ -2,7 +2,7 @@ import aio_pika
 import requests
 import uvicorn
 from fastapi import FastAPI
-from src.rabbit.server import rabbit
+from rabbit.server import rabbit
 
 app = FastAPI()
 

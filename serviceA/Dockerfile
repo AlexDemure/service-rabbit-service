@@ -2,7 +2,7 @@ FROM tiangolo/uvicorn-gunicorn:python3.8
 
 RUN pip install aio-pika fastapi requests
 
-COPY . .
+COPY src ./src/
 
 EXPOSE 7040
 
