@@ -42,12 +42,7 @@ class BaseRMQ:
 
     async def connect_to_broker(self) -> Channel:
         """
-        Общая точка для получения канала или RPC-клиента для работы с брокером.
-        Должна быть использована любыми пользователями брокера.
-
-        Возвращает канал к брокеру RabbitMQ, используя по возможности уже существующие
-        в переменных BROKER_CONNECTION и BROKER_CHANNEL. Если они отсутствуют, то функция создает их и
-        помещает в эти переменные.
+        Общая точка для получения канала для работы с брокером. Возвращает канал к брокеру RabbitMQ.
         """
         retries = 0
         while not self.connection:
@@ -72,6 +67,14 @@ class BaseRMQ:
 
 
 class MessageQueue(BaseRMQ):
+
+    async def send(self, queue_name: str, data: Any):
+        message = Message(
+            body=self.serialize(data),
+            content_type="application/json",
+            correlation_id=str(uuid4()),
+        )
+        await self.channel.default_exchange.publish(message, queue_name)
 
     async def consume_queue(self, func, queue_name: str, auto_delete_queue: bool = False):
         """Регистрация очереди в брокере и получение IncomingMessage в функцию."""
@@ -101,11 +104,17 @@ class RPC(BaseRMQ):
         message.ack()
 
     async def call(self, queue_name: str, **kwargs):
+        # Создание уникальной очереди на которую будет возвращен ответ из другого сервиса.
         callback_queue = await self.channel.declare_queue(exclusive=True, auto_delete=True, durable=True)
+
+        # Метод класса который обрабатывает ответ
         await callback_queue.consume(self.on_response)
+
+        # Копирование консумеров для удаления очереди из раббита
         consumers = copy.copy(callback_queue._consumers)
 
         correlation_id = str(uuid4())
+
         future = self.channel.loop.create_future()
 
         self.futures[correlation_id] = future
@@ -123,6 +132,7 @@ class RPC(BaseRMQ):
 
         response = await future
 
+        # Удаление слушателей
         await self.cancel_consumer(callback_queue, consumers)
 
         return response
@@ -132,8 +142,19 @@ class RPC(BaseRMQ):
         # Создание queues в рабите
         queue = await self.channel.declare_queue(queue_name)
         await queue.consume(partial(
-            func, self.channel.default_exchange)
+            self.on_call_message, self.channel.default_exchange, func)
         )
+
+    async def on_call_message(self, exchange, func, message: IncomingMessage):
+        payload = self.deserialize(message.body)
+        result = await func(**payload)
+        result = self.serialize(result)
+
+        await exchange.publish(
+            Message(body=result, correlation_id=message.correlation_id),
+            routing_key=message.reply_to,
+        )
+        message.ack()
 
 
 def connect_data():

@@ -41,18 +41,7 @@ async def mq_accept_message(msg) -> None:
     await msg.ack()
 
 
-async def rpc_accept_message(exchange, msg):
-
-    logging.debug(f"{msg.body}")
-
-    await exchange.publish(
-        Message(
-            body="hello world".encode(),
-            correlation_id=msg.correlation_id
-        ),
-        routing_key=msg.reply_to,
-    )
-    msg.ack()
+async def rpc_accept_message(**kwargs):
     return "hello world 2"
 
 

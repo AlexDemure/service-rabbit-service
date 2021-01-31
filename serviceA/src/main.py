@@ -30,9 +30,7 @@ async def mq_send_message():
     routing_key = "mq_test_queue"  # Название очереди которую слушает сервис B
 
     # Публикация сообщения.
-    await mq.channel.default_exchange.publish(
-        aio_pika.Message(b'MQServiceA', content_type='text/plain'), routing_key
-    )
+    await mq.send(routing_key, "hello world")
 
 
 @app.get("/rpc_send_message")
