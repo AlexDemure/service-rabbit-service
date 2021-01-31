@@ -4,15 +4,19 @@ import logging
 import requests
 import uvicorn
 from fastapi import FastAPI
-from rabbit.server import rabbit
+from rabbit.server import mq, rpc
+from aio_pika.message import Message
 
 app = FastAPI()
 
 
-@app.on_event('startup')  # Hook up message consuming to work in same event loop in parallel to Starlette app.
+@app.on_event('startup')
 async def start_message_consuming():
-    await rabbit.init_connection()  # Инициализация коннекта и создание channel
-    asyncio.ensure_future(asyncio.gather(*all_consumers), loop=asyncio.get_event_loop())
+    await mq.connect_to_broker()
+    await rpc.connect_to_broker()
+    await rpc.consume_queue(rpc_accept_message, "rpc_test_queue")
+    await mq.consume_queue(mq_accept_message, "mq_test_queue")
+
 
 
 def get_fake_data() -> dict:
@@ -37,11 +41,19 @@ async def mq_accept_message(msg) -> None:
     await msg.ack()
 
 
-# Регистрация слушателей очереди.
-# Для этого необходимо передать пока что функцию (коротину) и название очереди которую будет слушать эта функция.
-all_consumers = (
-    rabbit.consume_queue(mq_accept_message, "mq_test_queue"),
-)
+async def rpc_accept_message(exchange, msg):
+
+    logging.debug(f"{msg.body}")
+
+    await exchange.publish(
+        Message(
+            body="hello world".encode(),
+            correlation_id=msg.correlation_id
+        ),
+        routing_key=msg.reply_to,
+    )
+    msg.ack()
+    return "hello world 2"
 
 
 if __name__ == '__main__':

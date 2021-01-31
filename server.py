@@ -92,10 +92,9 @@ class RPC(BaseRMQ):
     def on_response(self, message: IncomingMessage):
         future = self.futures.pop(message.correlation_id)
         future.set_result(message.body)
-        message.ack()
 
     async def call(self, queue_name: str, **kwargs):
-        callback_queue = await self.channel.declare_queue(exclusive=True, auto_delete=True, durable=True)
+        callback_queue = await self.channel.declare_queue(exclusive=True, auto_delete=True)
         await callback_queue.consume(self.on_response)
 
         correlation_id = str(uuid4())
@@ -111,11 +110,9 @@ class RPC(BaseRMQ):
                 reply_to=callback_queue.name,
             ),
             routing_key=queue_name,
-            mandatory=True
         )
 
-        response = await future
-        return response
+        return await future
 
     async def consume_queue(self, func, queue_name: str):
         """Регистрация очереди в брокере и получение IncomingMessage в функцию."""
