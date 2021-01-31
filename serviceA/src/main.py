@@ -2,15 +2,15 @@ import aio_pika
 import requests
 import uvicorn
 from fastapi import FastAPI
-from rabbit.server import mq, rpc
+from rabbit.server import mq, rpc, connect_to_broker
 
 app = FastAPI()
 
 
 @app.on_event('startup')
 async def start_message_consuming():
-    await mq.connect_to_broker()
-    await rpc.connect_to_broker()
+    channel = await connect_to_broker()
+    mq.channel = rpc.channel = channel
 
 
 @app.get("/users")
@@ -43,9 +43,10 @@ async def rpc_send_message():
     routing_key = "rpc_test_queue"  # Название очереди которую слушает сервис B
 
     # Публикация сообщения.
-    for _ in range(100):
-        response = await rpc.call(routing_key, **dict(x=1))
+
+    response = await rpc.call(routing_key)
     return response
+
 
 if __name__ == '__main__':
     uvicorn.run("main:app", host="127.0.0.1", port=7040, reload=True, log_level="debug")

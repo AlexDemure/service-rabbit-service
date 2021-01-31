@@ -12,25 +12,24 @@ from functools import partial
 from aio_pika.channel import Channel
 from aio_pika.message import IncomingMessage, Message
 
+# Параметры RMQ иначе используются дефолтные значения от контейнера.
+RMQ_LOGIN = os.environ.get("RMQ_LOGIN", "user")
+RMQ_PASSWORD = os.environ.get("RMQ_PASSWORD", "bitnami")
+RMQ_HOST = os.environ.get("RMQ_HOST", "127.0.0.1")
+RMQ_PORT = os.environ.get("RMQ_PORT", "5672")
+
+# Эти глобальные переменные хранят объекты соединения и канала к брокеру.
+# Функция connect_to_broker пытается в первую очередь использовать их, но если их нет, то она создаст их.
+BROKER_CONNECTION = None
+BROKER_CHANNEL = None
+
 
 class BaseRMQ:
 
-    login: str = None
-    password: str = None
-    host: str = None
-    port: str = None
-
-    connection = None
     channel = None
 
-    def __init__(self, login: str, password: str, host: str, port: str):
-        self.login = login
-        self.password = password
-        self.host = host
-        self.port = port
-
-    def generate_url_connection(self) -> str:
-        return f"amqp://{self.login}:{self.password}@{self.host}:{self.port}/"
+    def __init__(self, channel: Channel = None):
+        self.channel = channel
 
     @staticmethod
     def serialize(data: Any) -> bytes:
@@ -40,44 +39,24 @@ class BaseRMQ:
     def deserialize(data: bytes) -> Any:
         return json.loads(data)
 
-    async def connect_to_broker(self) -> Channel:
-        """
-        Общая точка для получения канала для работы с брокером. Возвращает канал к брокеру RabbitMQ.
-        """
-        retries = 0
-        while not self.connection:
-            conn_str = self.generate_url_connection()
-            print(f"Trying to create connection to broker: {conn_str}")
-            try:
-                self.connection = await aio_pika.connect_robust(conn_str)
-                print(f"Connected to broker ({type(self.connection)} ID {id(self.connection)}")
-            except Exception as e:
-                if retries > 5:
-                    raise Exception
-                retries += 1
-                print(f"Can't connect to broker {retries} time({e.__class__.__name__}:{e}). Will retry in 5 seconds...")
-                sleep(5)
-
-        if not self.channel:
-            print("Trying to create channel to broker")
-            self.channel = await self.connection.channel()
-            print("Got a channel to broker")
-
-        return self.channel
-
 
 class MessageQueue(BaseRMQ):
+    """Класс предазначен для работы по принципу publisher / subscriber."""
 
     async def send(self, queue_name: str, data: Any):
+        """MQ-метод для отправки месседжа в один конец."""
+        # Крафт месседджа.
+        # Месседж - объект который получит другой сервис.
         message = Message(
             body=self.serialize(data),
             content_type="application/json",
             correlation_id=str(uuid4()),
         )
+        # Публикация сообщения в брокер используя дефолтную очередь.
         await self.channel.default_exchange.publish(message, queue_name)
 
     async def consume_queue(self, func, queue_name: str, auto_delete_queue: bool = False):
-        """Регистрация очереди в брокере и получение IncomingMessage в функцию."""
+        """Прослушивание очереди брокера."""
         # Создание queues в рабите
         queue = await self.channel.declare_queue(queue_name, auto_delete=auto_delete_queue, durable=True)
 
@@ -90,31 +69,50 @@ class MessageQueue(BaseRMQ):
 
 
 class RPC(BaseRMQ):
+    """Класс предазначен для работы по принципу удаленных вызовов (RPC)."""
 
     futures = {}
 
     @staticmethod
     async def cancel_consumer(queue, consumers):
+        """
+        Удаление из очереди слушателей
+
+        Необходимо для того чтобы убрать привязанного слушателя от очереди после получения сообщения.
+        На работу системы никак не влияет необходимо лишь для того что подчищать очереди из брокера.
+        """
         for key, val in consumers.items():
             await queue.cancel(key)
 
     def on_response(self, message: IncomingMessage):
+        """
+        Функция которая обрабатывает приходящий ответ из другого сервиса
+
+        Magic-method
+        """
         future = self.futures.pop(message.correlation_id)
         future.set_result(message.body)
         message.ack()
 
     async def call(self, queue_name: str, **kwargs):
+        """
+        RPC-метод для отправки в другой сервис с целью возврата ответа из другого сервиса.
+
+        Данный метод на каждый вызов создает уникальную очередь
+        тем самым не скапливая в одной очереди множество запросов.
+
+        Важно!!! Узнать в лучший способ использования создания анонимных очередей.
+        """
         # Создание уникальной очереди на которую будет возвращен ответ из другого сервиса.
         callback_queue = await self.channel.declare_queue(exclusive=True, auto_delete=True, durable=True)
 
-        # Метод класса который обрабатывает ответ
-        await callback_queue.consume(self.on_response)
+        await callback_queue.consume(self.on_response)  # Метод класса который обрабатывает ответ
 
-        # Копирование консумеров для удаления очереди из раббита
-        consumers = copy.copy(callback_queue._consumers)
+        consumers = copy.copy(callback_queue._consumers)  # Копирование консумеров для удаления очереди из раббита
 
         correlation_id = str(uuid4())
 
+        # Magic #1
         future = self.channel.loop.create_future()
 
         self.futures[correlation_id] = future
@@ -130,22 +128,33 @@ class RPC(BaseRMQ):
             mandatory=True
         )
 
+        # Magic #2 Выполняется только после того как другой сервис пришлет запрос.
         response = await future
 
-        # Удаление слушателей
+        # Magic #3 Удаление слушателей.
+        # Почему-то даже с auto_delete очередь после выполнения не удаляется ссылаясь на консумера.
+        # Поэтому решение было вручную удалять консумера после выполнения задачи.
         await self.cancel_consumer(callback_queue, consumers)
 
         return response
 
     async def consume_queue(self, func, queue_name: str):
-        """Регистрация очереди в брокере и получение IncomingMessage в функцию."""
-        # Создание queues в рабите
+        """Прослушивание очереди брокера."""
         queue = await self.channel.declare_queue(queue_name)
+
+        # Все очереди обрабатываются одной общей функцией.
+        # В нее передается exchange, func и сам message.
+
+        # Exchange используется для возврата ответа используя метод publish.
+
+        # partial работает как генерировании функции с аргументами,
+        # Если пройтись по стеку тогда там на выходе будет что-то подобного on_call_message(message, exchange, func)
         await queue.consume(partial(
             self.on_call_message, self.channel.default_exchange, func)
         )
 
     async def on_call_message(self, exchange, func, message: IncomingMessage):
+        """Единая функция для приема message из других сервисов и отправки обратно ответа."""
         payload = self.deserialize(message.body)
         result = await func(**payload)
         result = self.serialize(result)
@@ -157,15 +166,30 @@ class RPC(BaseRMQ):
         message.ack()
 
 
-def connect_data():
-    """Данные для подключения к брокеру."""
-    return dict(
-        login=os.environ.get("RMQ_LOGIN", "user"),
-        password=os.environ.get("RMQ_PASSWORD", "bitnami"),
-        host=os.environ.get("RMQ_HOST", "127.0.0.1"),
-        port=os.environ.get("RMQ_PORT", "5672"),
-    )
+async def connect_to_broker() -> Channel:
+    """Подключение к брокеру и возвращат канал для работы с брокером."""
+    global BROKER_CONNECTION
+    global BROKER_CHANNEL
+
+    retries = 0
+    while not BROKER_CONNECTION:
+        conn_str = f"amqp://{RMQ_LOGIN}:{RMQ_PASSWORD}@{RMQ_HOST}:{RMQ_PORT}/"
+        print(f"Trying to create connection to broker: {conn_str}")
+        try:
+            BROKER_CONNECTION = await aio_pika.connect_robust(conn_str)
+            print(f"Connected to broker ({type(BROKER_CONNECTION)} ID {id(BROKER_CONNECTION)})")
+        except Exception as e:
+            retries += 1
+            print(f"Can't connect to broker {retries} time({e.__class__.__name__}:{e}). Will retry in 5 seconds...")
+            sleep(5)
+
+    if not BROKER_CHANNEL:
+        print("Trying to create channel to broker")
+        BROKER_CHANNEL = await BROKER_CONNECTION.channel()
+        print("Got a channel to broker")
+
+    return BROKER_CHANNEL
 
 
-mq = MessageQueue(**connect_data())
-rpc = RPC(**connect_data())
+mq = MessageQueue()
+rpc = RPC()
