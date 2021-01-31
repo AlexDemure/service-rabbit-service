@@ -60,17 +60,10 @@ DEBUG:    Start to consuming queue: <Queue(mq_test_queue): auto_delete=False, du
 
 #### Подключение коннекта сервиса к брокеру
 В каждом сервисе есть файл src/rabbit/server.py там находится класс RQ и RPC с методами для работы с брокером. <br>
-Для того чтобы подключится к брокеру в каждом сервисе необходимо перед запуском приложения сделать:
+Для того чтобы подключится к брокеру в каждом сервисе необходимо перед запуском приложения сделать (FastAPI):
 ```sh
 from scr.rabbit.server import rpc, mq, connect_to_broker
 
-channel = await connect_to_broker()
-rpc.channel = mq.channel = channel
-```
-rabbit - Инстанс класса RabbitMQ в котором устанавливаются параметры к брокеру (логин, пароль, хост, пароль) <br>
-
-В случае с использованием FastAPI есть startup events можно сделать таким образом:
-```sh
 @app.on_event('startup')
 async def start_message_consuming():
     channel = await connect_to_broker()
