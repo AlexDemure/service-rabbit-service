@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import copy
 import json
 from typing import Any
 from uuid import uuid4
@@ -89,6 +90,11 @@ class RPC(BaseRMQ):
 
     futures = {}
 
+    @staticmethod
+    async def cancel_consumer(queue, consumers):
+        for key, val in consumers.items():
+            await queue.cancel(key)
+
     def on_response(self, message: IncomingMessage):
         future = self.futures.pop(message.correlation_id)
         future.set_result(message.body)
@@ -97,6 +103,7 @@ class RPC(BaseRMQ):
     async def call(self, queue_name: str, **kwargs):
         callback_queue = await self.channel.declare_queue(exclusive=True, auto_delete=True, durable=True)
         await callback_queue.consume(self.on_response)
+        consumers = copy.copy(callback_queue._consumers)
 
         correlation_id = str(uuid4())
         future = self.channel.loop.create_future()
@@ -115,6 +122,9 @@ class RPC(BaseRMQ):
         )
 
         response = await future
+
+        await self.cancel_consumer(callback_queue, consumers)
+
         return response
 
     async def consume_queue(self, func, queue_name: str):
