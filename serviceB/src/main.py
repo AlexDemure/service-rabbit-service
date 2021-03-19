@@ -32,7 +32,7 @@ async def get_posts() -> dict:
 async def mq_accept_message(msg) -> None:
     """MQ-функция которая слушает очередь test-queue приходит объект IncomingMessage"""
     print(get_fake_data())
-
+    # test = 1 / 0
     # Если не ack-ать message тогда она будет висеть в рабите
     # и при перезапуске приложения этот message снова попадет в функцию.
     await msg.ack()

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+
 import os
 import copy
 import json
@@ -136,7 +137,7 @@ class RPC(BaseRMQ):
         # Поэтому решение было вручную удалять консумера после выполнения задачи.
         await self.cancel_consumer(callback_queue, consumers)
 
-        return response
+        return self.deserialize(response)
 
     async def consume_queue(self, func, queue_name: str):
         """Прослушивание очереди брокера."""
@@ -156,7 +157,11 @@ class RPC(BaseRMQ):
     async def on_call_message(self, exchange, func, message: IncomingMessage):
         """Единая функция для приема message из других сервисов и отправки обратно ответа."""
         payload = self.deserialize(message.body)
-        result = await func(**payload)
+        try:
+            result = await func(**payload)
+        except Exception as e:
+            result = self.serialize(dict(error='error', reason=str(e)))
+
         result = self.serialize(result)
 
         await exchange.publish(
